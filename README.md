@@ -131,3 +131,5 @@ ngrok http 3000
 - The current session management (`api/index.js`) uses a simple in-memory store per user ID. For production, replace this with a more persistent store like Redis or a database.
 - Error handling can be further improved (e.g., more specific error messages, retries).
 - Consider security best practices for storing credentials, especially the service account key.
+
+<!-- Trigger Vercel redeploy -->
