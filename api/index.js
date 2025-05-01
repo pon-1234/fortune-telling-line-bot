@@ -90,11 +90,6 @@ async function handleEvent(event) {
     return Promise.resolve(null);
 }
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`LINE Bot server running on port ${PORT}`);
-});
-
 // Basic Error Handling for uncaught exceptions (as per non-functional requirements)
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
@@ -106,3 +101,6 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
   // TODO: Add Slack Webhook notification here if configured
 });
+
+// Export the Express app for Vercel
+module.exports = app;
