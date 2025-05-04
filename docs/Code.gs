@@ -22,9 +22,9 @@ function onEdit(e) {
   const editedColumn = editedRange.getColumn();
   const editedRow = editedRange.getRow();
 
-  // Check if the edited sheet is TARGET_SHEET_NAME and the edited column is G (status, column 7)
+  // Check if the edited sheet is TARGET_SHEET_NAME and the edited column is H (status, column 8)
   // Also check if the edited value is '検閲済'
-  if (s.getName() !== TARGET_SHEET_NAME || editedColumn !== 7 || e.value !== '検閲済') { 
+  if (s.getName() !== TARGET_SHEET_NAME || editedColumn !== 8 || e.value !== '検閲済') { 
     Logger.log(`Edit ignored: Sheet=${s.getName()}, Col=${editedColumn}, Value=${e.value}`);
     return;
   }
@@ -32,11 +32,11 @@ function onEdit(e) {
   Logger.log(`Processing edit for row ${editedRow}`);
 
   // Get the data from the edited row (Columns A to I)
-  // Indices: 0=timestamp, 1=userId, 2=name, 3=birth, 4=theme, 5=gptDraft, 6=status, 7=editedText, 8=sentAt
+  // Indices: 0=timestamp, 1=userId, 2=name, 3=birth, 4=theme, 5=gptDraft, 6=editedText, 7=status, 8=sentAt
   const data = s.getRange(editedRow, 1, 1, 9).getValues()[0];
   const userId = data[1];
   const gptDraft = data[5];
-  const editedText = data[7]; // Column H
+  const editedText = data[6]; // Column G
 
   // Determine the text to send: Use editedText if available, otherwise use gptDraft
   const textToSend = editedText ? editedText.trim() : gptDraft.trim();
@@ -44,7 +44,7 @@ function onEdit(e) {
   if (!userId || !textToSend) {
     Logger.log(`Missing userId or text to send for row ${editedRow}. userId: ${userId}, text: ${textToSend}`);
     SpreadsheetApp.getUi().alert(`Row ${editedRow}: 送信に必要なユーザーIDまたは本文がありません。`);
-    s.getRange(editedRow, 7).setValue('送信エラー:情報不足'); // Update status to indicate error
+    s.getRange(editedRow, 8).setValue('送信エラー:情報不足'); // Update status to indicate error
     return;
   }
 
@@ -54,14 +54,14 @@ function onEdit(e) {
   if (pushLine(userId, textToSend)) {
     Logger.log(`Successfully sent message to ${userId}. Updating sheet.`);
     // If sending is successful, update status to '送信済' and record the sent timestamp
-    s.getRange(editedRow, 7).setValue('送信済'); // Column G
+    s.getRange(editedRow, 8).setValue('送信済'); // Column H
     s.getRange(editedRow, 9).setValue(new Date()); // Column I
   } else {
     Logger.log(`Failed to send message to ${userId}.`);
     // If sending fails, show an alert
     SpreadsheetApp.getUi().alert(`Row ${editedRow}: LINEメッセージの送信に失敗しました。ステータスは「検閲済」のままです。`);
     // Optionally, update status to reflect the error, e.g., '送信失敗'
-    // s.getRange(editedRow, 7).setValue('送信失敗');
+    // s.getRange(editedRow, 8).setValue('送信失敗');
   }
 }
 
