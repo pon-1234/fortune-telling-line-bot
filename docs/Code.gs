@@ -17,6 +17,12 @@ const TARGET_SHEET_NAME = 'data'; // <--- The name of the sheet to monitor
  * @param {Event} e The onEdit event object.
  */
 function onEdit(e) {
+  // 引数が正しく渡されているかチェック
+  if (!e || !e.source || !e.range) {
+    Logger.log('onEdit was called without proper event object');
+    return;
+  }
+  
   const s = e.source.getActiveSheet();
   const editedRange = e.range;
   const editedColumn = editedRange.getColumn();
@@ -109,4 +115,35 @@ function pushLine(to, message) {
     Logger.log(`Error during UrlFetchApp.fetch: ${error}`);
     return false;
   }
+}
+
+/**
+ * 状態列（H列）にドロップダウンリストを設定する関数
+ * この関数を一度手動で実行すると、H列に選択式のドロップダウンリストが設定されます。
+ */
+function setupStatusColumnValidation() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(TARGET_SHEET_NAME);
+  
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert(`シート '${TARGET_SHEET_NAME}' が見つかりません。`);
+    return;
+  }
+  
+  // A列（または常にデータがある列）の最終行を取得
+  const lastRow = Math.max(sheet.getLastRow(), 100); // 将来のエントリ用に少なくとも100行
+  
+  // H列（状態列）の範囲を定義、2行目から開始（1行目はヘッダーと仮定）
+  const statusRange = sheet.getRange(2, 8, lastRow - 1);
+  
+  // 状態オプションを含むドロップダウン検証を作成
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['検閲済', '送信済', '送信エラー:情報不足'], true)
+    .setAllowInvalid(false)
+    .build();
+  
+  // 検証ルールを状態列に適用
+  statusRange.setDataValidation(rule);
+  
+  SpreadsheetApp.getUi().alert('状態列（H列）にドロップダウンリストを設定しました。');
 }
