@@ -131,5 +131,11 @@ ngrok http 3000
 - The current session management (`api/index.js`) uses a simple in-memory store per user ID. For production, replace this with a more persistent store like Redis or a database.
 - Error handling can be further improved (e.g., more specific error messages, retries).
 - Consider security best practices for storing credentials, especially the service account key.
+- **Fortune Telling Logic Update (YYYY-MM-DD):** <--- 日付は適宜変更してください
+  - The core fortune-telling prompt provided to OpenAI GPT has been significantly enhanced to adhere to strict traditional divination methods, as per the detailed AI persona provided.
+  - The AI now attempts to perform detailed analysis using multiple oriental and western divination techniques specified in its new system prompt.
+  - **Limitations:** The LINE bot currently collects only `name`, `birth date`, and `theme`. More advanced divination (e.g., precise astrological charts requiring birth time/place, detailed name analysis requiring font style specification) may have limitations or rely on general assumptions. The AI has been instructed to acknowledge these limitations where applicable in its responses.
+  - The "General Diagnosis" plan (【一般診断】) from the provided AI persona is used by default for all requests. More complex plans (起・承・転・結) are not yet selectable by the user through the LINE interface.
+  - The reference to `file-Sx1YARrbmt6KZEDkgkDTXM` (divination rule master) in the AI persona's prompt is simulated, as the current API setup cannot directly access external files. The AI is instructed to act as if it has internalized these rules based on the provided persona.
 
 <!-- Trigger Vercel redeploy -->
