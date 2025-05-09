@@ -10,7 +10,7 @@
 // Value: Your LINE Channel Access Token (Long-lived or use OAuth2 for better security if needed)
 // -----------------------
 
-var TARGET_SHEET_NAME = 'Requests'; // Match with Node.js config and README
+var TARGET_SHEET_NAME = 'data'; // Match with Node.js config and README
 
 /**
  * The event handler triggered when the spreadsheet is edited.
