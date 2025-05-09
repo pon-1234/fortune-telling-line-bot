@@ -1,15 +1,18 @@
 require('dotenv').config();
 const express = require('express');
-const session = require('express-session');
+const session = require('express-session'); // express-session をインポート
 const line = require('@line/bot-sdk');
 const { handleTextMessage } = require('./handlers/textMessageHandler');
 const { handlePostback } = require('./handlers/postbackHandler');
 
 // Redis Session Store
 const Redis = require('ioredis');
-const RedisStore = require("connect-redis"); // ★★★ 修正点: .default を削除 ★★★
+const connectRedis = require("connect-redis"); // connect-redis 本体を require
+const RedisStore = connectRedis(session);    // ★★★ express-session を渡して初期化 ★★★
 
 // LINE Bot Config
+// ... (これより下は前回提示した全文コードと同じ構造ですが、RedisStoreの初期化方法のみ上記のように変更)
+
 const config = {
     channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
     channelSecret: process.env.CHANNEL_SECRET,
@@ -35,7 +38,7 @@ and will not work correctly in a serverless environment like Vercel.`
 
 // Session Middleware
 const sessionMiddleware = session({
-    store: redisClient ? new RedisStore({ client: redisClient, prefix: "fortuneApp:" }) : undefined,
+    store: redisClient ? new RedisStore({ client: redisClient, prefix: "fortuneApp:" }) : undefined, // ここでの new RedisStore の呼び出しは変更なし
     secret: process.env.SESSION_SECRET || 'default_super_secret_key_for_dev_only',
     resave: false,
     saveUninitialized: false,
@@ -47,6 +50,7 @@ const sessionMiddleware = session({
 });
 app.use(sessionMiddleware);
 
+// ... (以降のコードは前回提示した全文と同じです)
 // LINE Webhook Endpoint
 app.post('/webhook', line.middleware(config), (req, res) => {
     Promise.all(req.body.events.map(event => handleEvent(req, event)))
