@@ -39,6 +39,7 @@ async function getAuthenticatedClient() {
 
 /**
  * Appends a new fortune request row to the Google Sheet.
+ * Columns: timestamp(A), userId(B), name(C), birth(D), theme(E), gptDraft(F), editedText(G), status(H), sentAt(I)
  * @param {string} userId - The LINE user ID.
  * @param {string} name - The user's name.
  * @param {string} birth - The user's birth date.
@@ -52,15 +53,15 @@ async function appendFortuneRequest(userId, name, birth, theme, gptDraft) {
         const timestamp = new Date().toISOString();
         const values = [
             [
-                timestamp,
-                userId,
-                name,
-                birth,
-                theme,
-                gptDraft,
-                '未検閲', // Initial status
-                '',      // editedText (initially empty)
-                ''       // sentAt (initially empty)
+                timestamp,    // Column A
+                userId,       // Column B
+                name,         // Column C
+                birth,        // Column D
+                theme,        // Column E
+                gptDraft,     // Column F
+                '',           // Column G: editedText (initially empty)
+                '未検閲',     // Column H: status (Initial status)
+                ''            // Column I: sentAt (initially empty)
             ]
         ];
 
