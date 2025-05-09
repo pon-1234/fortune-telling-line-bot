@@ -7,26 +7,7 @@ const { handlePostback } = require('./handlers/postbackHandler');
 
 // Redis Session Store
 const Redis = require('ioredis');
-
-// --- ここからデバッグコード ---
-const connectRedisActualImport = require("connect-redis");
-console.log('--- DEBUG: connect-redis actual import ---');
-console.log(connectRedisActualImport);
-console.log('--- typeof connect-redis actual import:', typeof connectRedisActualImport);
-if (connectRedisActualImport && connectRedisActualImport.default) {
-    console.log('--- DEBUG: connect-redis actual import HAS .default property ---');
-    console.log(connectRedisActualImport.default);
-    console.log('--- typeof connect-redis actual import.default:', typeof connectRedisActualImport.default);
-}
-if (connectRedisActualImport && connectRedisActualImport.RedisStore) {
-    console.log('--- DEBUG: connect-redis actual import HAS .RedisStore property ---');
-    console.log(connectRedisActualImport.RedisStore);
-    console.log('--- typeof connect-redis actual import.RedisStore:', typeof connectRedisActualImport.RedisStore);
-}
-console.log('--- END DEBUG ---');
-// --- デバッグコードここまで ---
-
-const RedisStore = require("connect-redis"); // ログの結果を見て、ここを connectRedisActualImport.default や connectRedisActualImport.RedisStore に変更する可能性があります。
+const RedisStore = require("connect-redis").RedisStore; // ★★★ 修正点 ★★★
 
 // LINE Bot Config
 const config = {
@@ -54,7 +35,7 @@ and will not work correctly in a serverless environment like Vercel.`
 
 // Session Middleware
 const sessionMiddleware = session({
-    store: redisClient ? new RedisStore({ client: redisClient, prefix: "fortuneApp:" }) : undefined, // この行がエラー発生箇所 (38行目あたり)
+    store: redisClient ? new RedisStore({ client: redisClient, prefix: "fortuneApp:" }) : undefined, // この行がエラー発生箇所
     secret: process.env.SESSION_SECRET || 'default_super_secret_key_for_dev_only',
     resave: false,
     saveUninitialized: false,
