@@ -23,17 +23,10 @@ let redisClient;
 if (process.env.KV_URL) {
     console.log(`API_INDEX: Configuring Redis client with KV_URL (first 30 chars): ${process.env.KV_URL.substring(0,30)}...`);
     redisClient = new Redis(process.env.KV_URL, {
-        connectTimeout: 10000, // 接続タイムアウトを10秒に設定
+        connectTimeout: 10000,
         showFriendlyErrorStack: true,
-        // Vercel KVがrediss:// (TLS) を使用している場合、ioredis v5では通常自動認識されます。
         tls: process.env.KV_URL.startsWith("rediss://") ? {} : undefined,
-        lazyConnect: true, // ★★★ 実際にコマンドが必要になるまで接続を遅延 ★★★
-        // リトライ戦略はioredisのデフォルトに任せるか、必要に応じてカスタム
-        // retryStrategy(times) {
-        //     const delay = Math.min(times * 100, 2000); // 例: 最大2秒
-        //     console.log(`API_INDEX: Redis retrying connection, attempt ${times}, delay ${delay}ms`);
-        //     return delay;
-        // }
+        lazyConnect: true,
     });
 
     redisClient.on('connect', () => console.log('API_INDEX: Redis client emitted "connect" event (logical connect, physical may be later with lazyConnect).'));
@@ -55,7 +48,7 @@ const sessionMiddleware = session({
     store: redisClient ? new RedisStore({ client: redisClient, prefix: "fortuneApp:" }) : undefined,
     secret: process.env.SESSION_SECRET || 'default_super_secret_key_for_dev_only',
     resave: false,
-    saveUninitialized: true, // 新規セッションもストアに保存 (安定後false検討)
+    saveUninitialized: false, // ★★★ false に変更 ★★★ (セッションが変更された場合のみ保存)
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
@@ -66,17 +59,14 @@ const sessionMiddleware = session({
 app.use(sessionMiddleware);
 
 // LINE Webhook Endpoint
-app.post('/webhook', line.middleware(config), async (req, res) => { // ★★★ async に変更 ★★★
+app.post('/webhook', line.middleware(config), async (req, res) => {
     if (redisClient) {
         try {
-            // lazyConnect: true の場合、最初のコマンドで接続が試みられる
-            // redisClient.status が 'ready' でなければ、ping を試みて接続を確立
             if (redisClient.status !== 'ready') {
                 console.log(`API_INDEX: Webhook - Redis client status is '${redisClient.status}'. Attempting ping to connect/verify.`);
-                await redisClient.ping(); // これで接続が確立されるか、エラーが発生する
+                await redisClient.ping();
                 console.log('API_INDEX: Webhook - Redis ping successful, client should be ready.');
             }
-            // 再度ステータスを確認
             if (redisClient.status !== 'ready') {
                  console.error("API_INDEX: Webhook - Redis client still not ready after ping. Status:", redisClient.status);
                  return res.status(503).json({ message: 'Session store is temporarily unavailable. Please try again later.' });
@@ -86,29 +76,23 @@ app.post('/webhook', line.middleware(config), async (req, res) => { // ★★★
             return res.status(503).json({ message: 'Failed to connect to the session store. Please try again later.' });
         }
     } else if (process.env.KV_URL) {
-        // redisClient が null だが KV_URL は設定されている (致命的な初期化エラーの可能性)
         console.error("API_INDEX: Webhook - KV_URL is set, but redisClient is unexpectedly null.");
         return res.status(500).json({ message: 'Session store configuration error. Please contact support.' });
     }
-    // MemoryStoreの場合 (redisClientがundefined) はそのまま進む
 
-    Promise.all(req.body.events.map(event => handleEvent(req, event))) // handleEventにはreqを渡すのでredisClientを直接渡す必要はなし
+    Promise.all(req.body.events.map(event => handleEvent(req, event)))
         .then((result) => res.json(result))
         .catch((err) => {
             console.error('Webhook Error processing events:', err);
-            // ここで500エラーを返すのは適切だが、ユーザーへのフィードバックも考慮
             res.status(500).json({ message: 'An internal error occurred while processing your request.' });
         });
 });
 
 // Event Handler
 async function handleEvent(req, event) {
-    // redisClientのチェックは上位のWebhookハンドラで行ったため、ここでは省略。
-    // もしhandleEventが直接呼ばれるケースがあるなら、ここでもチェックが必要。
-
     if (event.type === 'unfollow' || event.type === 'leave') {
         console.log(`API_INDEX: User ${event.source.userId} left or unfollowed.`);
-        if (req.session) { // req.session は sessionMiddleware によって提供される
+        if (req.session) {
             if (req.session.currentUserId === event.source.userId) {
                 try {
                     await new Promise((resolve, reject) => {
@@ -134,16 +118,18 @@ async function handleEvent(req, event) {
 
     if (!event.source || !event.source.userId) {
         console.error('API_INDEX: Event source or userId is missing:', event);
-        return Promise.resolve(null); // or throw error
+        return Promise.resolve(null);
     }
 
     console.log(`API_INDEX: Before session check for user ${event.source.userId}. req.session.id: ${req.sessionID}, req.session.botState:`, JSON.stringify(req.session.botState), `req.session.currentUserId: ${req.session.currentUserId}`);
 
+    // saveUninitialized: false の場合、セッションオブジェクトに何か変更を加えないとセッションIDが発行されない（クッキーが送信されない）
+    // 最初のメッセージで botState を初期化するので、そこでセッションが "変更された" とみなされるはず
     if (!req.session.botState || req.session.currentUserId !== event.source.userId) {
         console.log(`API_INDEX: Initializing or switching session state for user ${event.source.userId}.`);
         console.log(`API_INDEX: Previous botState:`, JSON.stringify(req.session.botState), `Previous currentUserId: ${req.session.currentUserId}`);
-        req.session.currentUserId = event.source.userId;
-        req.session.botState = {
+        req.session.currentUserId = event.source.userId; // セッション変更
+        req.session.botState = { // セッション変更
             step: 0,
             name: '',
             birth: '',
@@ -162,7 +148,7 @@ async function handleEvent(req, event) {
     try {
         if (event.type === 'message') {
             if (event.message.type === 'text') {
-                await handleTextMessage(client, event, userSessionData);
+                await handleTextMessage(client, event, userSessionData); // userSessionData (req.session.botState の参照) が変更される
             } else {
                 console.log(`API_INDEX: Received non-text message type: ${event.message.type} from user ${event.source.userId}`);
                 if (event.replyToken && !event.replyTokenExpired) {
@@ -173,13 +159,19 @@ async function handleEvent(req, event) {
                 }
             }
         } else if (event.type === 'postback') {
-            await handlePostback(client, event, userSessionData);
+            await handlePostback(client, event, userSessionData); // userSessionData (req.session.botState の参照) が変更される
         } else {
             console.log(`API_INDEX: Unhandled event type by this logic: ${event.type}`);
         }
 
+        // req.session.botState がハンドラ内で変更された後、
+        // express-session は resave: false と saveUninitialized: false の設定に基づき、
+        // セッションが実際に変更された場合のみストアに保存しようとする。
+        // 明示的な req.session.save() は、自動保存が期待通りに動作しない場合の最終手段。
         console.log(`API_INDEX: Attempting to save session for user ${event.source.userId}. Session ID: ${req.sessionID}. Current botState:`, JSON.stringify(req.session.botState));
         if (req.session && typeof req.session.save === 'function') {
+             // セッションに変更があった場合 (例: userSessionData.step が変わった)、
+             // express-sessionが自動で保存するはずだが、明示的に呼ぶことで確実性を上げる (特にサーバーレス環境)
             await new Promise((resolve, reject) => {
                 req.session.save(err => {
                     if (err) {
@@ -194,7 +186,6 @@ async function handleEvent(req, event) {
         } else if (req.session) {
             console.log(`API_INDEX: Session data for user ${event.source.userId} (no explicit save, store might auto-save). Current botState after handling:`, JSON.stringify(req.session.botState));
         } else {
-            // このケースは sessionMiddleware が正しく動作していれば通常発生しない
             console.warn(`API_INDEX: req.session is undefined for user ${event.source.userId}. Cannot save session. Check sessionMiddleware.`);
         }
 
@@ -218,7 +209,6 @@ async function handleEvent(req, event) {
 
 process.on('uncaughtException', (err, origin) => {
     console.error('API_INDEX: Uncaught Exception at:', origin, 'error:', err);
-    // サーバーレス環境では通常自動で再起動されるため、process.exitは必ずしも必要ない
 });
 
 process.on('unhandledRejection', (reason, promise) => {
