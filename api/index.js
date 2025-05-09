@@ -7,7 +7,26 @@ const { handlePostback } = require('./handlers/postbackHandler');
 
 // Redis Session Store
 const Redis = require('ioredis');
-const RedisStore = require("connect-redis"); // ★★★ 修正点: .default を削除 ★★★
+
+// --- ここからデバッグコード ---
+const connectRedisActualImport = require("connect-redis");
+console.log('--- DEBUG: connect-redis actual import ---');
+console.log(connectRedisActualImport);
+console.log('--- typeof connect-redis actual import:', typeof connectRedisActualImport);
+if (connectRedisActualImport && connectRedisActualImport.default) {
+    console.log('--- DEBUG: connect-redis actual import HAS .default property ---');
+    console.log(connectRedisActualImport.default);
+    console.log('--- typeof connect-redis actual import.default:', typeof connectRedisActualImport.default);
+}
+if (connectRedisActualImport && connectRedisActualImport.RedisStore) {
+    console.log('--- DEBUG: connect-redis actual import HAS .RedisStore property ---');
+    console.log(connectRedisActualImport.RedisStore);
+    console.log('--- typeof connect-redis actual import.RedisStore:', typeof connectRedisActualImport.RedisStore);
+}
+console.log('--- END DEBUG ---');
+// --- デバッグコードここまで ---
+
+const RedisStore = require("connect-redis"); // ログの結果を見て、ここを connectRedisActualImport.default や connectRedisActualImport.RedisStore に変更する可能性があります。
 
 // LINE Bot Config
 const config = {
