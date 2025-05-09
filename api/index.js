@@ -1,30 +1,48 @@
 require('dotenv').config();
 const express = require('express');
-const session = require('express-session'); // express-session をインポート
+const session = require('express-session');
 const line = require('@line/bot-sdk');
 const { handleTextMessage } = require('./handlers/textMessageHandler');
 const { handlePostback } = require('./handlers/postbackHandler');
 
-// Redis Session Store
 const Redis = require('ioredis');
 const RedisStore = require("connect-redis").RedisStore;
 
-// LINE Bot Config
 const config = {
     channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
     channelSecret: process.env.CHANNEL_SECRET,
 };
 
 const client = new line.messagingApi.MessagingApiClient(config);
-
 const app = express();
 
-// Redis Client Setup
+// trust proxy 設定を追加 (リバースプロキシ環境で secure cookie を正しく扱うため)
+app.set('trust proxy', 1);
+
 let redisClient;
 if (process.env.KV_URL) {
-    redisClient = new Redis(process.env.KV_URL);
-    redisClient.on('connect', () => console.log('API_INDEX: Successfully connected to Redis for session store.'));
-    redisClient.on('error', (err) => console.error('API_INDEX: Redis Client Error:', err));
+    console.log(`API_INDEX: Attempting to connect to Redis with KV_URL (first 30 chars): ${process.env.KV_URL.substring(0,30)}...`);
+    redisClient = new Redis(process.env.KV_URL, {
+        connectTimeout: 15000, // 接続タイムアウトを15秒に延長
+        showFriendlyErrorStack: true, // 詳細なエラースタック (開発/デバッグ時)
+        // Vercel KVがrediss:// (TLS) を使用している場合、ioredis v5では通常自動認識されますが、
+        // 明示的にTLSオプションを設定することも可能です。
+        // Vercel KVの接続文字列が `rediss://` で始まっている場合は、以下の tls: {} が有効になります。
+        tls: process.env.KV_URL.startsWith("rediss://") ? {} : undefined,
+        // retryStrategy(times) {
+        //     const delay = Math.min(times * 100, 3000); // リトライ遅延
+        //     console.log(`API_INDEX: Redis retrying connection, attempt ${times}, delay ${delay}ms`);
+        //     return delay;
+        // }
+    });
+
+    redisClient.on('connect', () => console.log('API_INDEX: Redis client successfully emitted "connect" event.'));
+    redisClient.on('ready', () => console.log('API_INDEX: Redis client is ready (connected and ready to process commands).'));
+    redisClient.on('error', (err) => console.error('API_INDEX: Redis Client Error:', err)); // このエラーが頻発する場合、接続に問題あり
+    redisClient.on('close', () => console.log('API_INDEX: Redis connection closed.'));
+    redisClient.on('reconnecting', (delay) => console.log(`API_INDEX: Redis client reconnecting in ${delay}ms...`));
+    redisClient.on('end', () => console.log('API_INDEX: Redis connection has ended (will not reconnect).'));
+
 } else {
     console.warn(
 `API_INDEX: KV_URL (Redis connection string) is not defined.
@@ -33,22 +51,30 @@ and will not work correctly in a serverless environment like Vercel.`
     );
 }
 
-// Session Middleware
 const sessionMiddleware = session({
     store: redisClient ? new RedisStore({ client: redisClient, prefix: "fortuneApp:" }) : undefined,
     secret: process.env.SESSION_SECRET || 'default_super_secret_key_for_dev_only',
     resave: false,
-    saveUninitialized: true, // 新規セッションも保存するように変更 (場合によっては false のままが良いことも)
+    saveUninitialized: true, // 新規セッションもストアに保存 (デバッグのためtrue、安定したらfalse推奨)
     cookie: {
-        secure: process.env.NODE_ENV === 'production',
+        secure: process.env.NODE_ENV === 'production', // 本番環境ではtrue
         httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000 // 1 day
+        maxAge: 24 * 60 * 60 * 1000, // 1 day
+        // sameSite 設定を追加
+        sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax'
     }
 });
 app.use(sessionMiddleware);
 
 // LINE Webhook Endpoint
 app.post('/webhook', line.middleware(config), (req, res) => {
+    // Redisクライアントの準備状態を確認
+    if (redisClient && redisClient.status !== 'ready') {
+        console.error("API_INDEX: Webhook called but Redis client is not ready. Current status:", redisClient.status);
+        // 503 Service Unavailableを返すか、適切なエラー処理を行う
+        // return res.status(503).json({ message: 'Session store not available. Please try again later.' });
+    }
+
     Promise.all(req.body.events.map(event => handleEvent(req, event)))
         .then((result) => res.json(result))
         .catch((err) => {
@@ -58,13 +84,29 @@ app.post('/webhook', line.middleware(config), (req, res) => {
 });
 
 // Event Handler
-async function handleEvent(req, event) { // async を追加
+async function handleEvent(req, event) {
+    // handleEvent内でもRedisの準備状態を確認
+    if (redisClient && redisClient.status !== 'ready') {
+        console.error(`API_INDEX: handleEvent for user ${event.source.userId} - Redis client not ready. Status: ${redisClient.status}`);
+        if (event.replyToken && !event.replyTokenExpired) {
+            try {
+                await client.replyMessage({
+                    replyToken: event.replyToken,
+                    messages: [{ type: 'text', text: '現在サーバーが混み合っています。しばらくしてからもう一度お試しください。' }]
+                });
+            } catch (replyError) {
+                console.error('API_INDEX: Failed to send "Redis not ready" reply to user:', replyError);
+            }
+        }
+        return null;
+    }
+
     if (event.type === 'unfollow' || event.type === 'leave') {
         console.log(`API_INDEX: User ${event.source.userId} left or unfollowed.`);
         if (req.session) {
             if (req.session.currentUserId === event.source.userId) {
                 try {
-                    await new Promise((resolve, reject) => { // destroy も await で待つ
+                    await new Promise((resolve, reject) => {
                         req.session.destroy(err => {
                             if (err) {
                                 console.error(`API_INDEX: Session destroy error for user ${event.source.userId} on unfollow/leave:`, err);
@@ -90,16 +132,16 @@ async function handleEvent(req, event) { // async を追加
         return Promise.resolve(null);
     }
 
-    // セッション初期化/復元ロジック
-    // Vercel環境では、各リクエストでセッションがストアからロードされることを期待
-    // req.session は express-sessionミドルウェアによってリクエストオブジェクトにアタッチされる
+    // セッションIDと現在のセッション内容をリクエストの最初にログ出力
     console.log(`API_INDEX: Before session check for user ${event.source.userId}. req.session.id: ${req.sessionID}, req.session.botState:`, JSON.stringify(req.session.botState), `req.session.currentUserId: ${req.session.currentUserId}`);
 
     if (!req.session.botState || req.session.currentUserId !== event.source.userId) {
         console.log(`API_INDEX: Initializing or switching session state for user ${event.source.userId}.`);
         console.log(`API_INDEX: Previous botState:`, JSON.stringify(req.session.botState), `Previous currentUserId: ${req.session.currentUserId}`);
-        req.session.currentUserId = event.source.userId; // ユーザーIDをセッションに保存
-        req.session.botState = { // 新しいbotStateを初期化
+        // セッションにユーザーIDを保存
+        req.session.currentUserId = event.source.userId;
+        // 新しいbotStateを初期化
+        req.session.botState = {
             step: 0,
             name: '',
             birth: '',
@@ -122,7 +164,7 @@ async function handleEvent(req, event) { // async を追加
                 await handleTextMessage(client, event, userSessionData);
             } else {
                 console.log(`API_INDEX: Received non-text message type: ${event.message.type} from user ${event.source.userId}`);
-                if (event.replyToken) {
+                if (event.replyToken && !event.replyTokenExpired) {
                     await client.replyMessage({
                         replyToken: event.replyToken,
                         messages: [{ type: 'text', text: 'テキストメッセージで話しかけてくださいね。スタンプや画像などには、まだ対応していません。' }]
@@ -136,7 +178,7 @@ async function handleEvent(req, event) { // async を追加
         }
 
         // セッションの変更を保存
-        console.log(`API_INDEX: Attempting to save session for user ${event.source.userId}. Current botState:`, JSON.stringify(req.session.botState));
+        console.log(`API_INDEX: Attempting to save session for user ${event.source.userId}. Session ID: ${req.sessionID}. Current botState:`, JSON.stringify(req.session.botState));
         if (req.session && typeof req.session.save === 'function') {
             await new Promise((resolve, reject) => {
                 req.session.save(err => {
@@ -156,8 +198,8 @@ async function handleEvent(req, event) { // async を追加
         }
 
     } catch (error) {
-        console.error(`API_INDEX: Error handling event for ${event.source.userId}:`, error);
-        if (event.replyToken && !event.replyTokenExpired) { // replyTokenが期限切れでないか確認
+        console.error(`API_INDEX: Error handling event for ${event.source.userId} (Session ID: ${req.sessionID}):`, error);
+        if (event.replyToken && !event.replyTokenExpired) {
             try {
                 await client.replyMessage({
                     replyToken: event.replyToken,
@@ -173,7 +215,7 @@ async function handleEvent(req, event) { // async を追加
     return Promise.resolve(null);
 }
 
-process.on('uncaughtException', (err, origin) => { // origin を追加
+process.on('uncaughtException', (err, origin) => {
     console.error('API_INDEX: Uncaught Exception at:', origin, 'error:', err);
 });
 
