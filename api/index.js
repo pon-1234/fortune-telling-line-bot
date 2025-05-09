@@ -7,7 +7,7 @@ const { handlePostback } = require('./handlers/postbackHandler');
 
 // Redis Session Store
 const Redis = require('ioredis');
-const RedisStore = require("connect-redis").default;
+const RedisStore = require("connect-redis"); // ★★★ 修正点: .default を削除 ★★★
 
 // LINE Bot Config
 const config = {
