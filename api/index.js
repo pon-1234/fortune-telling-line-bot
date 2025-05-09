@@ -16,7 +16,6 @@ const config = {
 const client = new line.messagingApi.MessagingApiClient(config);
 const app = express();
 
-// trust proxy 設定 (リバースプロキシ環境で secure cookie を正しく扱うため)
 app.set('trust proxy', 1);
 
 let redisClient;
@@ -29,68 +28,66 @@ if (process.env.KV_URL) {
         lazyConnect: true,
     });
 
-    redisClient.on('connect', () => console.log('API_INDEX: Redis client emitted "connect" event (logical connect, physical may be later with lazyConnect).'));
-    redisClient.on('ready', () => console.log('API_INDEX: Redis client is ready (connected and ready to process commands).'));
+    redisClient.on('connect', () => console.log('API_INDEX: Redis client emitted "connect" event.'));
+    redisClient.on('ready', () => console.log('API_INDEX: Redis client is ready.'));
     redisClient.on('error', (err) => console.error('API_INDEX: Redis Client Error:', err));
     redisClient.on('close', () => console.log('API_INDEX: Redis connection closed.'));
     redisClient.on('reconnecting', (delay) => console.log(`API_INDEX: Redis client reconnecting in ${delay}ms...`));
-    redisClient.on('end', () => console.log('API_INDEX: Redis connection has ended (will not reconnect).'));
+    redisClient.on('end', () => console.log('API_INDEX: Redis connection has ended.'));
 
 } else {
-    console.warn(
-`API_INDEX: KV_URL (Redis connection string) is not defined.
-Session management will use MemoryStore, which is not suitable for production
-and will not work correctly in a serverless environment like Vercel.`
-    );
+    console.warn('API_INDEX: KV_URL is not defined. Using MemoryStore.');
 }
 
 const sessionMiddleware = session({
     store: redisClient ? new RedisStore({ client: redisClient, prefix: "fortuneApp:" }) : undefined,
     secret: process.env.SESSION_SECRET || 'default_super_secret_key_for_dev_only',
     resave: false,
-    saveUninitialized: false, // ★★★ false に変更 ★★★ (セッションが変更された場合のみ保存)
+    saveUninitialized: true, // ★★★ true に戻す（デバッグのため） ★★★
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000, // 1 day
+        maxAge: 24 * 60 * 60 * 1000,
         sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax'
     }
 });
 app.use(sessionMiddleware);
 
-// LINE Webhook Endpoint
 app.post('/webhook', line.middleware(config), async (req, res) => {
     if (redisClient) {
         try {
             if (redisClient.status !== 'ready') {
-                console.log(`API_INDEX: Webhook - Redis client status is '${redisClient.status}'. Attempting ping to connect/verify.`);
+                console.log(`API_INDEX: Webhook - Redis status: '${redisClient.status}'. Pinging.`);
                 await redisClient.ping();
-                console.log('API_INDEX: Webhook - Redis ping successful, client should be ready.');
+                console.log('API_INDEX: Webhook - Redis ping OK.');
             }
             if (redisClient.status !== 'ready') {
-                 console.error("API_INDEX: Webhook - Redis client still not ready after ping. Status:", redisClient.status);
-                 return res.status(503).json({ message: 'Session store is temporarily unavailable. Please try again later.' });
+                 console.error("API_INDEX: Webhook - Redis still not ready. Status:", redisClient.status);
+                 return res.status(503).json({ message: 'Session store unavailable.' });
             }
         } catch (err) {
-            console.error("API_INDEX: Webhook - Error during Redis ping or client connection:", err);
-            return res.status(503).json({ message: 'Failed to connect to the session store. Please try again later.' });
+            console.error("API_INDEX: Webhook - Redis connection error:", err);
+            return res.status(503).json({ message: 'Session store connection failed.' });
         }
     } else if (process.env.KV_URL) {
-        console.error("API_INDEX: Webhook - KV_URL is set, but redisClient is unexpectedly null.");
-        return res.status(500).json({ message: 'Session store configuration error. Please contact support.' });
+        console.error("API_INDEX: Webhook - KV_URL set, but redisClient is null.");
+        return res.status(500).json({ message: 'Session store config error.' });
     }
 
     Promise.all(req.body.events.map(event => handleEvent(req, event)))
         .then((result) => res.json(result))
         .catch((err) => {
-            console.error('Webhook Error processing events:', err);
-            res.status(500).json({ message: 'An internal error occurred while processing your request.' });
+            console.error('Webhook event processing error:', err);
+            res.status(500).json({ message: 'Internal error.' });
         });
 });
 
-// Event Handler
 async function handleEvent(req, event) {
+    // ★★★ リクエストヘッダーのクッキーをログに出力 ★★★
+    console.log(`API_INDEX: handleEvent - User: ${event.source.userId}, Request Cookie Header:`, req.headers.cookie);
+
     if (event.type === 'unfollow' || event.type === 'leave') {
+        // ... (省略)
         console.log(`API_INDEX: User ${event.source.userId} left or unfollowed.`);
         if (req.session) {
             if (req.session.currentUserId === event.source.userId) {
@@ -123,13 +120,11 @@ async function handleEvent(req, event) {
 
     console.log(`API_INDEX: Before session check for user ${event.source.userId}. req.session.id: ${req.sessionID}, req.session.botState:`, JSON.stringify(req.session.botState), `req.session.currentUserId: ${req.session.currentUserId}`);
 
-    // saveUninitialized: false の場合、セッションオブジェクトに何か変更を加えないとセッションIDが発行されない（クッキーが送信されない）
-    // 最初のメッセージで botState を初期化するので、そこでセッションが "変更された" とみなされるはず
     if (!req.session.botState || req.session.currentUserId !== event.source.userId) {
         console.log(`API_INDEX: Initializing or switching session state for user ${event.source.userId}.`);
         console.log(`API_INDEX: Previous botState:`, JSON.stringify(req.session.botState), `Previous currentUserId: ${req.session.currentUserId}`);
-        req.session.currentUserId = event.source.userId; // セッション変更
-        req.session.botState = { // セッション変更
+        req.session.currentUserId = event.source.userId;
+        req.session.botState = {
             step: 0,
             name: '',
             birth: '',
@@ -148,8 +143,9 @@ async function handleEvent(req, event) {
     try {
         if (event.type === 'message') {
             if (event.message.type === 'text') {
-                await handleTextMessage(client, event, userSessionData); // userSessionData (req.session.botState の参照) が変更される
+                await handleTextMessage(client, event, userSessionData);
             } else {
+                // ... (省略)
                 console.log(`API_INDEX: Received non-text message type: ${event.message.type} from user ${event.source.userId}`);
                 if (event.replyToken && !event.replyTokenExpired) {
                     await client.replyMessage({
@@ -159,19 +155,13 @@ async function handleEvent(req, event) {
                 }
             }
         } else if (event.type === 'postback') {
-            await handlePostback(client, event, userSessionData); // userSessionData (req.session.botState の参照) が変更される
+            await handlePostback(client, event, userSessionData);
         } else {
             console.log(`API_INDEX: Unhandled event type by this logic: ${event.type}`);
         }
 
-        // req.session.botState がハンドラ内で変更された後、
-        // express-session は resave: false と saveUninitialized: false の設定に基づき、
-        // セッションが実際に変更された場合のみストアに保存しようとする。
-        // 明示的な req.session.save() は、自動保存が期待通りに動作しない場合の最終手段。
         console.log(`API_INDEX: Attempting to save session for user ${event.source.userId}. Session ID: ${req.sessionID}. Current botState:`, JSON.stringify(req.session.botState));
         if (req.session && typeof req.session.save === 'function') {
-             // セッションに変更があった場合 (例: userSessionData.step が変わった)、
-             // express-sessionが自動で保存するはずだが、明示的に呼ぶことで確実性を上げる (特にサーバーレス環境)
             await new Promise((resolve, reject) => {
                 req.session.save(err => {
                     if (err) {
@@ -184,12 +174,13 @@ async function handleEvent(req, event) {
                 });
             });
         } else if (req.session) {
-            console.log(`API_INDEX: Session data for user ${event.source.userId} (no explicit save, store might auto-save). Current botState after handling:`, JSON.stringify(req.session.botState));
+            console.log(`API_INDEX: Session data for user ${event.source.userId} (no explicit save). Current botState:`, JSON.stringify(req.session.botState));
         } else {
-            console.warn(`API_INDEX: req.session is undefined for user ${event.source.userId}. Cannot save session. Check sessionMiddleware.`);
+            console.warn(`API_INDEX: req.session is undefined for user ${event.source.userId}. Cannot save session.`);
         }
 
     } catch (error) {
+        // ... (省略)
         console.error(`API_INDEX: Error handling event for ${event.source.userId} (Session ID: ${req.sessionID}):`, error);
         if (event.replyToken && !event.replyTokenExpired) {
             try {
@@ -206,7 +197,7 @@ async function handleEvent(req, event) {
     }
     return Promise.resolve(null);
 }
-
+// ... (process.on イベントハンドラは省略)
 process.on('uncaughtException', (err, origin) => {
     console.error('API_INDEX: Uncaught Exception at:', origin, 'error:', err);
 });
