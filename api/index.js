@@ -7,7 +7,7 @@ const { handlePostback } = require('./handlers/postbackHandler');
 
 // Redis Session Store
 const Redis = require('ioredis');
-const RedisStore = require("connect-redis").default; // ★★★ 修正点 ★★★
+const RedisStore = require("connect-redis"); // ★★★ 修正点: .default を削除 ★★★
 
 // LINE Bot Config
 const config = {
@@ -34,8 +34,8 @@ and will not work correctly in a serverless environment like Vercel.`
 }
 
 // Session Middleware
-const sessionMiddleware = session({ // このオブジェクトの開始が37行目あたり
-    store: redisClient ? new RedisStore({ client: redisClient, prefix: "fortuneApp:" }) : undefined, // この行が38行目 (エラー発生箇所)
+const sessionMiddleware = session({
+    store: redisClient ? new RedisStore({ client: redisClient, prefix: "fortuneApp:" }) : undefined, // この行がエラー発生箇所 (38行目あたり)
     secret: process.env.SESSION_SECRET || 'default_super_secret_key_for_dev_only',
     resave: false,
     saveUninitialized: false,
