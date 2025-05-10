@@ -1,6 +1,6 @@
 /**
  * Google Apps Script to send LINE message when status is updated in Google Sheet.
- * Trigger: onEdit
+ * Trigger: myOnEditTrigger (renamed from onEdit to avoid conflict with simple triggers)
  */
 
 // --- Script Properties ---
@@ -14,12 +14,13 @@ var TARGET_SHEET_NAME = 'data'; // Match with Node.js config and README
 
 /**
  * The event handler triggered when the spreadsheet is edited.
+ * This function should be set as an installable trigger.
  * @param {Event} e The onEdit event object.
  */
-function onEdit(e) {
+function myOnEditTrigger(e) {
     // 引数が正しく渡されているかチェック
     if (!e || !e.source || !e.range) {
-        Logger.log('onEdit was called without proper event object');
+        Logger.log('myOnEditTrigger was called without proper event object');
         return;
     }
     
@@ -32,11 +33,11 @@ function onEdit(e) {
     // Also check if the edited value is '検閲済'
     // Headers: timestamp(A), userId(B), name(C), birth(D), theme(E), gptDraft(F), editedText(G), status(H), sentAt(I)
     if (s.getName() !== TARGET_SHEET_NAME || editedColumn !== 8 || e.value !== '検閲済') {  
-        Logger.log('Edit ignored: Sheet=' + s.getName() + ', Col=' + editedColumn + ', Value=' + e.value + ', Expected Sheet: ' + TARGET_SHEET_NAME + ', Expected Col: 8, Expected Value: 検閲済');
+        Logger.log('Edit ignored for myOnEditTrigger: Sheet=' + s.getName() + ', Col=' + editedColumn + ', Value=' + e.value + ', Expected Sheet: ' + TARGET_SHEET_NAME + ', Expected Col: 8, Expected Value: 検閲済');
         return;
     }
 
-    Logger.log('Processing edit for row ' + editedRow);
+    Logger.log('Processing edit in myOnEditTrigger for row ' + editedRow);
 
     // Get the data from the edited row (Columns A to I)
     // Indices: 0=A, 1=B, 2=C, 3=D, 4=E, 5=F(gptDraft), 6=G(editedText), 7=H(status), 8=I(sentAt)
@@ -50,22 +51,22 @@ function onEdit(e) {
     var textToSend = (editedText && editedText.toString().trim() !== '') ? editedText.toString().trim() : gptDraft.toString().trim();
 
     if (!userId || !textToSend) {
-        Logger.log('Missing userId or text to send for row ' + editedRow + '. userId: ' + userId + ', text: ' + textToSend);
+        Logger.log('Missing userId or text to send in myOnEditTrigger for row ' + editedRow + '. userId: ' + userId + ', text: ' + textToSend);
         SpreadsheetApp.getUi().alert('Row ' + editedRow + ': 送信に必要なユーザーIDまたは本文がありません。');
         s.getRange(editedRow, 8).setValue('送信エラー:情報不足'); // Update status (Column H) to indicate error
         return;
     }
 
-    Logger.log('Attempting to send message to userId: ' + userId);
+    Logger.log('Attempting to send message via pushLine from myOnEditTrigger to userId: ' + userId);
 
     // Send the message via LINE Push API
     if (pushLine(userId, textToSend)) {
-        Logger.log('Successfully sent message to ' + userId + '. Updating sheet.');
+        Logger.log('Successfully sent message from myOnEditTrigger to ' + userId + '. Updating sheet.');
         // If sending is successful, update status to '送信済' and record the sent timestamp
         s.getRange(editedRow, 8).setValue('送信済');      // Column H (status)
         s.getRange(editedRow, 9).setValue(new Date()); // Column I (sentAt)
     } else {
-        Logger.log('Failed to send message to ' + userId + '.');
+        Logger.log('Failed to send message from myOnEditTrigger to ' + userId + '.');
         // If sending fails, show an alert
         SpreadsheetApp.getUi().alert('Row ' + editedRow + ': LINEメッセージの送信に失敗しました。ステータスは「検閲済」のままです。');
         // Optionally, update status to reflect the error, e.g., '送信失敗'
@@ -82,7 +83,7 @@ function onEdit(e) {
 function pushLine(to, message) {
     var token = PropertiesService.getScriptProperties().getProperty('LINE_ACCESS_TOKEN');
     if (!token) {
-        Logger.log('Error: LINE_ACCESS_TOKEN script property is not set.');
+        Logger.log('Error in pushLine: LINE_ACCESS_TOKEN script property is not set.');
         SpreadsheetApp.getUi().alert('設定エラー: LINE アクセストークンがスクリプトプロパティに設定されていません。');
         return false;
     }
@@ -100,21 +101,26 @@ function pushLine(to, message) {
         payload: JSON.stringify(payload),
         muteHttpExceptions: true, // Prevent script termination on HTTP errors, allowing us to check the response code
     };
+    
+    Logger.log('pushLine: Attempting to send LINE message. To: ' + to + ', Payload: ' + JSON.stringify(payload));
 
     try {
         var response = UrlFetchApp.fetch(url, options);
         var responseCode = response.getResponseCode();
         var responseBody = response.getContentText();
 
+        Logger.log('pushLine: LINE Push API Response Code: ' + responseCode);
+        Logger.log('pushLine: LINE Push API Response Body: ' + responseBody);
+
         if (responseCode === 200) {
-            Logger.log('LINE Push API success for user ' + to + '.');
+            Logger.log('pushLine: LINE Push API success (Code 200) for user ' + to + '. Returning true.');
             return true;
         } else {
-            Logger.log('LINE Push API error for user ' + to + '. Code: ' + responseCode + ', Body: ' + responseBody);
+            Logger.log('pushLine: LINE Push API error for user ' + to + '. Code: ' + responseCode + '. Returning false.');
             return false;
         }
     } catch (error) {
-        Logger.log('Error during UrlFetchApp.fetch: ' + error.toString());
+        Logger.log('pushLine: Exception during UrlFetchApp.fetch: ' + error.toString() + '. Stack: ' + error.stack + '. Returning false.');
         return false;
     }
 }
